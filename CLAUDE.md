@@ -162,6 +162,41 @@ Two GitHub Actions workflows run on push/PR:
 2. Update `validate_input()` if new fields affect validation
 3. Keep `strings.json` and `translations/en.json` in sync
 
+## API Discovery & Future Expansion
+
+The BLife app is built on **Spike Global's "Spike Living"** white-label platform. The API at `api-community.ballymorelife.com` has no public documentation. Endpoint discovery requires MITM proxying the mobile app or inspecting the web SPA at `apps.ballymorelife.com`.
+
+### Known API Pattern
+
+Endpoints follow a consistent structure: `GET /{section}/data-query/{resource}` with OData-style query params (`$top`, `$skip`, `$orderBy`). The `App-Path` header mirrors the section: `typeID:{section}, appID:{section}`.
+
+### Probable Additional Endpoints (Unverified)
+
+| Probable Endpoint | App-Path | Feature |
+|---|---|---|
+| `/my-visitors/data-query/visitors` | `typeID:my-visitors` | Visitor authorizations |
+| `/my-bookings/data-query/bookings` | `typeID:my-bookings` | Amenity/facility bookings |
+| `/my-issues/data-query/issues` | `typeID:my-issues` | Maintenance/defect tickets |
+| `/community/data-query/news` | `typeID:community` | Building announcements |
+| `/community/data-query/events` | `typeID:community` | Community events |
+| `/concierge/data-query/messages` | `typeID:concierge` | Concierge messaging |
+
+These are educated guesses based on the naming convention and app store feature listings. Verify via MITM proxy before implementing.
+
+### Adding a New API Section
+
+To add support for a new API section (e.g., visitors):
+1. Add a new `build_*_headers()` function to `api.py` with the appropriate `App-Path`
+2. Add a new URL constant to `api.py`
+3. Either extend the existing coordinator or create a new one (separate coordinators allow different poll intervals)
+4. Add new dataclass(es) in the coordinator module
+5. Add sensor descriptions in `sensor.py`
+6. Consider additional HA platforms: `calendar` for bookings/events, `binary_sensor` for visitor expected today
+
+### If Expanding Beyond Packages
+
+Consider renaming the domain from `blife_packages` to `blife` to support multiple feature areas under one integration. This would be a breaking change requiring a new config entry migration.
+
 ## Important Gotchas
 
 - **Token in response header:** Auth token comes back in the `U-Set-Token` HTTP header, not the JSON body
