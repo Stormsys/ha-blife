@@ -1,157 +1,148 @@
-# BLife Concierge Packages - Home Assistant Integration
+# BLife Concierge Packages
 
-A custom Home Assistant integration for tracking packages at your building's concierge desk.
+[![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)](https://github.com/hacs/integration)
+[![GitHub release](https://img.shields.io/github/v/release/Stormsys/ha-blife?style=for-the-badge)](https://github.com/Stormsys/ha-blife/releases)
+[![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.1+-blue.svg?style=for-the-badge&logo=home-assistant)](https://www.home-assistant.io/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)](LICENSE)
 
-## Features
+[![Validate with hassfest](https://github.com/Stormsys/ha-blife/actions/workflows/hassfest.yaml/badge.svg)](https://github.com/Stormsys/ha-blife/actions/workflows/hassfest.yaml)
+[![HACS Validation](https://github.com/Stormsys/ha-blife/actions/workflows/validate.yaml/badge.svg)](https://github.com/Stormsys/ha-blife/actions/workflows/validate.yaml)
 
-- **Configuration UI**: Easy setup through Home Assistant's UI with username, password, and device ID
-- **Async-first**: Built with modern async patterns using DataUpdateCoordinator
-- **Package Count Sensor**: `{firstname}_packages_ready_to_collect` - Shows count of packages waiting for pickup
-- **Package List Sensor**: `{firstname}_packages_list` - Full list of all packages with codes and details
-- **Auto-refresh**: Polls for updates every 5 minutes (configurable)
-- **Reauth Support**: Handles credential expiration gracefully
+---
+
+A custom [Home Assistant](https://www.home-assistant.io/) integration for **[Ballymore Life (BLife)](https://www.ballymorelife.com/)** residents. Track your concierge parcels and packages directly from your smart home dashboard — never miss a delivery again.
+
+> **Alpha Release** — This integration is in early development. Expect breaking changes between versions. Please [report issues](https://github.com/Stormsys/ha-blife/issues) if you encounter any problems.
+
+## What it does
+
+This integration connects to the BLife concierge system used in Ballymore residential developments and creates sensors that show:
+
+| Sensor | Description |
+|--------|-------------|
+| **Packages Ready to Collect** | Count of parcels waiting at the concierge desk, with full details in attributes |
+| **Last Package Reference** | Reference number of your most recent uncollected parcel for quick pickup |
+
+Sensors update automatically every 5 minutes, and the integration handles token refresh and re-authentication seamlessly.
 
 ## Installation
 
 ### HACS (Recommended)
 
-1. Open HACS in your Home Assistant
-2. Click on "Integrations"
-3. Click the three dots menu → "Custom repositories"
-4. Add this repository URL and select "Integration" as the category
-5. Install "BLife Concierge Packages"
-6. Restart Home Assistant
+1. Open **HACS** in your Home Assistant instance
+2. Click **Integrations** > three-dot menu > **Custom repositories**
+3. Add `https://github.com/Stormsys/ha-blife` with category **Integration**
+4. Search for **BLife Concierge Packages** and install it
+5. Restart Home Assistant
 
-### Manual Installation
+### Manual
 
-1. Copy the `custom_components/blife_packages` folder to your Home Assistant's `custom_components` directory
-2. Restart Home Assistant
+1. Download the [latest release](https://github.com/Stormsys/ha-blife/releases)
+2. Copy the `custom_components/blife_packages` folder into your Home Assistant `config/custom_components/` directory
+3. Restart Home Assistant
 
-## Secrets – what not to commit
+## Setup
 
-- **BLife credentials** (username, password, device ID) are only entered in Home Assistant’s UI and stored in HA’s config – they are never in this repo.
-- **Deploy script**: Do not hardcode your Home Assistant host or SSH user. Use environment variables:
-  - `export HA_HOST=192.168.0.117` (or `homeassistant.local`)
-  - `export HA_USER=root`
-  - `export HA_CONFIG_PATH=/config`
-  - Then run `./deploy.sh`
-- Optional: create a `deploy.local.sh` that sets these and run that instead; `deploy.local.sh` is in `.gitignore` and will not be committed.
-
-## Configuration
-
-1. Go to **Settings** → **Devices & Services**
+1. Go to **Settings** > **Devices & Services**
 2. Click **+ Add Integration**
-3. Search for "BLife Concierge Packages"
+3. Search for **BLife Concierge Packages**
 4. Enter your credentials:
-   - **Username**: Your BLife account email/username
-   - **Password**: Your BLife account password
-   - **Device ID**: Your building's unique device identifier
+
+| Field | Description |
+|-------|-------------|
+| **Username** | Your BLife account email |
+| **Password** | Your BLife account password |
+| **Device ID** | Your building's unique device identifier (from the BLife app) |
+
+> **Finding your Device ID:** Open the BLife mobile app, go to Settings/About, and locate your device identifier. Alternatively, inspect the app's network traffic to find the `DeviceID` header value.
 
 ## Sensors
 
-After configuration, the integration creates the following sensors:
+After setup, the integration creates a device called **BLife Concierge** with two sensors:
 
 ### Packages Ready to Collect
-- **Entity ID**: `sensor.{firstname}_packages_ready_to_collect`
-- **State**: Number of packages ready for pickup
-- **Attributes**:
-  - `packages`: List of ready packages with details
+- **State:** Number of parcels waiting for pickup
+- **Attributes:**
+  - `packages` — List of uncollected parcels, each containing:
+    - `ref_number` — Reference code for the concierge
+    - `sender_name` — Who sent the parcel
+    - `courier_name` — Delivery carrier
+    - `created_date` — When the parcel arrived
+    - `latest_action` — Current status
+    - `addressed_to_unit` — Your unit number
 
-### Packages List
-- **Entity ID**: `sensor.{firstname}_packages_list`
-- **State**: Total number of packages
-- **Attributes**:
-  - `packages`: Full list of all packages
-  - `ready_count`: Number ready for pickup
-  - `collected_count`: Number already collected
-
-## Package Attributes
-
-Each package in the list includes:
-- `package_id`: Unique package identifier
-- `code`: Pickup code for the concierge
-- `description`: Package description
-- `arrived_at`: Arrival timestamp
-- `status`: Current status (ready/collected)
-- `sender`: Package sender
-- `carrier`: Delivery carrier
+### Last Package Reference
+- **State:** Reference number of the most recently arrived uncollected parcel
+- **Attributes:**
+  - `last_package` — Full details of the most recent parcel
 
 ## Example Automations
 
-### Notify when new package arrives
+### Notify when a new parcel arrives
 
 ```yaml
 automation:
-  - alias: "New Package Notification"
-    trigger:
-      - platform: state
-        entity_id: sensor.john_packages_ready_to_collect
-    condition:
+  - alias: "New Parcel at Concierge"
+    triggers:
+      - trigger: state
+        entity_id: sensor.blife_concierge_packages_ready_to_collect
+    conditions:
       - condition: template
-        value_template: "{{ trigger.to_state.state | int > trigger.from_state.state | int }}"
-    action:
-      - service: notify.mobile_app
+        value_template: >
+          {{ trigger.to_state.state | int(0) > trigger.from_state.state | int(0) }}
+    actions:
+      - action: notify.mobile_app_your_phone
         data:
-          title: "📦 New Package!"
-          message: "You have {{ states('sensor.john_packages_ready_to_collect') }} package(s) ready for pickup"
+          title: "New Parcel"
+          message: >
+            You have {{ states('sensor.blife_concierge_packages_ready_to_collect') }}
+            parcel(s) waiting at the concierge.
 ```
 
-### Daily package summary
+### Evening reminder if parcels are uncollected
 
 ```yaml
 automation:
-  - alias: "Daily Package Summary"
-    trigger:
-      - platform: time
+  - alias: "Parcel Pickup Reminder"
+    triggers:
+      - trigger: time
         at: "18:00:00"
-    condition:
+    conditions:
       - condition: numeric_state
-        entity_id: sensor.john_packages_ready_to_collect
+        entity_id: sensor.blife_concierge_packages_ready_to_collect
         above: 0
-    action:
-      - service: notify.mobile_app
+    actions:
+      - action: notify.mobile_app_your_phone
         data:
-          title: "📬 Package Reminder"
-          message: "Don't forget! You have {{ states('sensor.john_packages_ready_to_collect') }} package(s) waiting at the concierge."
+          title: "Parcel Reminder"
+          message: >
+            You still have
+            {{ states('sensor.blife_concierge_packages_ready_to_collect') }}
+            parcel(s) to collect from the concierge.
 ```
 
-## API Integration
+### Display on a dashboard card
 
-The integration currently uses stub data for development. To connect to your actual BLife API:
-
-1. Update `coordinator.py`:
-   - Replace the stub `_fetch_packages_data()` method with actual API calls
-   - Implement proper authentication flow
-
-2. Update `config_flow.py`:
-   - Replace the stub `validate_input()` function with actual API validation
-
-3. Update `const.py`:
-   - Set `API_BASE_URL` to your actual API endpoint
-
-## Development
-
-### File Structure
-
-```
-custom_components/blife_packages/
-├── __init__.py          # Integration setup
-├── config_flow.py       # Configuration UI flow
-├── const.py             # Constants and configuration
-├── coordinator.py       # Data update coordinator
-├── manifest.json        # Integration metadata
-├── sensor.py            # Sensor entities
-├── strings.json         # Translation strings
-└── translations/
-    └── en.json          # English translations
+```yaml
+type: entities
+title: Concierge Parcels
+entities:
+  - entity: sensor.blife_concierge_packages_ready_to_collect
+    name: Waiting for Pickup
+  - entity: sensor.blife_concierge_last_package_ref_number
+    name: Latest Ref Number
 ```
 
-### Requirements
+## Requirements
 
-- Home Assistant 2024.1.0 or later
-- Python 3.11+
+- Home Assistant **2024.1.0** or later
+- A **Ballymore Life (BLife)** resident account
+- Your building's **Device ID**
+
+## Contributing
+
+Contributions are welcome! Please open an [issue](https://github.com/Stormsys/ha-blife/issues) first to discuss what you'd like to change.
 
 ## License
 
-MIT License
-
+[MIT](LICENSE)

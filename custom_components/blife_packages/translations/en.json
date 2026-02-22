@@ -39,10 +39,9 @@
       "packages_ready_to_collect": {
         "name": "Packages Ready to Collect"
       },
-      "packages_list": {
-        "name": "Packages List"
+      "last_package_ref_number": {
+        "name": "Last Package Reference"
       }
     }
   }
 }
-

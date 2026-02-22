@@ -2,175 +2,173 @@
 
 ## Project Overview
 
-**BLife Concierge Packages** is a Home Assistant custom integration that tracks packages at a building's concierge desk via the BLife (Ballymore Life) API. It polls the API every 5 minutes and exposes sensor entities showing package counts and details.
+**BLife Concierge Packages** is a Home Assistant custom integration that tracks parcels at a building's concierge desk via the Ballymore Life API. It polls the API every 5 minutes and exposes sensor entities showing package counts and details.
 
 - **Domain:** `blife_packages`
-- **Version:** 1.0.0
+- **Version:** 0.1.0 (Alpha)
 - **Minimum HA version:** 2024.1.0
 - **Python:** 3.11+
 - **IoT class:** `cloud_polling`
+- **HACS:** Custom repository
 
 ## Repository Structure
 
 ```
 ha-blife/
-├── CLAUDE.md                       # This file
-├── README.md                       # User-facing documentation
-├── Makefile                        # Deployment automation (SSH to HA host)
-├── hacs.json                       # HACS (Home Assistant Community Store) metadata
-├── .gitignore
+├── CLAUDE.md                           # This file
+├── README.md                           # User-facing documentation
+├── Makefile                            # Deployment automation (SSH to HA host)
+├── hacs.json                           # HACS metadata
+├── .github/
+│   └── workflows/
+│       ├── hassfest.yaml               # HA manifest validation CI
+│       └── validate.yaml               # HACS validation CI
 └── custom_components/
-    └── blife_packages/             # The integration
-        ├── __init__.py             # Entry point: async_setup_entry / async_unload_entry
-        ├── config_flow.py          # UI config flow + credential validation
-        ├── const.py                # Constants (domain, API URL, sensor keys, attribute keys)
-        ├── coordinator.py          # DataUpdateCoordinator: API calls, auth, data parsing
-        ├── sensor.py               # Sensor entity definitions (CoordinatorEntity pattern)
-        ├── manifest.json           # Integration metadata (domain, version, requirements)
-        ├── strings.json            # Localization source strings
-        ├── icon.png                # Integration icon
+    └── blife_packages/                 # The integration
+        ├── __init__.py                 # Entry point: async_setup_entry / async_unload_entry
+        ├── api.py                      # Shared API helpers (headers, payloads, URLs)
+        ├── config_flow.py              # UI config flow + credential validation
+        ├── const.py                    # Constants (domain, API URL, sensor keys)
+        ├── coordinator.py              # DataUpdateCoordinator: API calls, auth, data parsing
+        ├── sensor.py                   # Sensor entity definitions (CoordinatorEntity pattern)
+        ├── manifest.json               # Integration metadata (domain, version)
+        ├── strings.json                # Localization source strings
+        ├── icon.png                    # Integration icon
         └── translations/
-            └── en.json             # English translations (mirrors strings.json)
+            └── en.json                 # English translations (must mirror strings.json)
 ```
 
-All Python source lives under `custom_components/blife_packages/`. There is no separate `tests/` directory, `setup.py`, or `pyproject.toml` — this is a pure HA custom component, not a PyPI package.
+## Architecture
 
-## Architecture & Key Patterns
+### Module Responsibilities
 
-### Home Assistant Integration Lifecycle
-
-1. **Config Flow** (`config_flow.py`): User provides username, password, and device_id via the HA UI. Credentials are validated against the BLife `/account/login` endpoint. On success, the token and user's first name are stored in the config entry data.
-
-2. **Setup** (`__init__.py`): `async_setup_entry()` creates a `BLifePackagesCoordinator`, calls `async_config_entry_first_refresh()`, stores the coordinator in `hass.data[DOMAIN][entry.entry_id]`, and forwards setup to the `sensor` platform.
-
-3. **Coordinator** (`coordinator.py`): Extends `DataUpdateCoordinator[BLifePackagesData]`. Fetches data every 5 minutes from `/my-deliveries/data-query/packages`. Handles token expiration by re-authenticating automatically. Returns `BLifePackagesData` containing a list of `Package` dataclass instances.
-
-4. **Sensors** (`sensor.py`): Two sensors are created per config entry:
-   - `{firstname}_packages_ready_to_collect` — count of uncollected packages (with package list as attributes)
-   - `{firstname}_last_package_ref_number` — ref number of the most recent uncollected package
+| Module | Role |
+|--------|------|
+| `api.py` | Shared HTTP header builders, login payload builder, URL constants |
+| `config_flow.py` | UI config flow, credential validation, reauth handling |
+| `coordinator.py` | `DataUpdateCoordinator` subclass — all API interaction, auth token management, response parsing |
+| `sensor.py` | Sensor entity definitions — reads from coordinator data, no API calls |
+| `const.py` | Domain, config keys, scan interval, sensor key constants |
+| `__init__.py` | Integration lifecycle: setup, unload |
 
 ### Data Flow
 
 ```
-BLife API  -->  BLifePackagesCoordinator._fetch_packages_data()
-           -->  _parse_packages_response()  -->  BLifePackagesData
-           -->  BLifePackagesSensor.native_value / extra_state_attributes
+BLife API  →  coordinator._fetch_packages_data()
+           →  coordinator._parse_packages_response()  →  BLifePackagesData
+           →  BLifePackagesSensor.native_value / extra_state_attributes
 ```
 
 ### Authentication
 
-- Login endpoint: `POST {API_BASE_URL}/account/login`
-- Token is returned in the `U-Set-Token` response header (not the body)
-- Token is used as `Authorization: Bearer {token}` for subsequent requests
-- Headers mimic the BLife mobile app (iPhone User-Agent, specific `App-Path`, `DeviceID`, etc.)
+- Login: `POST /account/login` — token returned in `U-Set-Token` response header
+- Data: `Authorization: Bearer {token}` header on subsequent requests
+- Headers mimic the BLife mobile app (iPhone UA, `App-Path`, `DeviceID`, etc.)
 - On 401 during data fetch, coordinator re-authenticates once and retries
 - Persistent auth failure triggers HA's reauth flow via `ConfigEntryAuthFailed`
 
+### HTTP Sessions
+
+The integration uses Home Assistant's shared `aiohttp.ClientSession` via `async_get_clientsession(hass)`. Never create standalone `aiohttp.ClientSession` instances.
+
 ### Data Models
 
-- `Package` (dataclass): `package_id`, `ref_number`, `is_collection_required`, `latest_action`, `created_date`, `latest_action_date`, `addressed_to_unit`, `sender_name`, `courier_name`, `internal_number`
-- `BLifePackagesData` (dataclass): `firstname`, `packages: list[Package]`, `last_updated`
-- API timestamps are in milliseconds — converted via `datetime.fromtimestamp(ms / 1000)`
+- **`Package`** (dataclass): `package_id`, `ref_number`, `is_collection_required`, `latest_action`, `created_date`, `latest_action_date`, `addressed_to_unit`, `sender_name`, `courier_name`, `internal_number`
+- **`BLifePackagesData`** (dataclass): `firstname`, `packages: list[Package]`, `last_updated`
+  - `.uncollected_packages` — filtered list of packages not yet collected
+  - `.packages_ready_to_collect` — count of uncollected
+- All timestamps are **UTC-aware** (`datetime.fromtimestamp(ms / 1000, tz=timezone.utc)`)
+
+### Sensors
+
+Two sensors per config entry, defined as static `SENSOR_DESCRIPTIONS` list:
+
+| Sensor Key | Translation Key | State | Attributes |
+|------------|----------------|-------|------------|
+| `packages_ready_to_collect` | `packages_ready_to_collect` | Count (int) | `packages`: list of uncollected parcels |
+| `last_package_ref_number` | `last_package_ref_number` | Ref string or None | `last_package`: most recent parcel dict |
+
+Entity naming uses `_attr_has_entity_name = True` with `translation_key` only — do **not** set `name` on entity descriptions.
 
 ## Code Conventions
 
 ### Style
 
-- **Type hints** throughout, using Python 3.11+ syntax (`X | None` instead of `Optional[X]`)
-- **`from __future__ import annotations`** at the top of every module
-- **`typing.Final`** for all constants in `const.py`
-- **Dataclasses** for data models (not TypedDict or NamedTuple)
-- **`_LOGGER = logging.getLogger(__name__)`** in every module
-- **Docstrings** on all public classes and functions (short, imperative style)
-- **No trailing commas** enforcement, but they are generally used in multi-line structures
-- **Walrus operator** (`:=`) used in conditionals (e.g., `if unload_ok := ...`)
+- `from __future__ import annotations` at the top of every module
+- Type hints using Python 3.11+ syntax (`X | None`, not `Optional[X]`)
+- `typing.Final` for all constants
+- Dataclasses for data models
+- `_LOGGER = logging.getLogger(__name__)` in every module
+- Private attributes for sensitive data (`self._username`, `self._password`, `self._token`)
+- Walrus operator (`:=`) used in conditionals
 
-### Home Assistant Conventions
+### Home Assistant Patterns
 
-- Config entry data keys use `CONF_USERNAME`, `CONF_PASSWORD` from `homeassistant.const` and `CONF_DEVICE_ID` from local `const.py`
-- Error classes (`InvalidAuth`, `CannotConnect`) extend `HomeAssistantError`
-- Coordinator pattern: all API interaction is in the coordinator, sensors just read `self.coordinator.data`
-- Entity unique IDs: `{device_id}_{sensor_key}`
-- Device info groups entities under a single device per config entry
-- `_attr_has_entity_name = True` — entity names are relative to the device
+- Use `CONF_USERNAME` / `CONF_PASSWORD` from `homeassistant.const` (not local redefinitions)
+- Use `ConfigEntryAuthFailed` from `homeassistant.exceptions`
+- Use `async_get_clientsession(hass)` — never create manual `aiohttp.ClientSession`
+- `requirements` in `manifest.json` must be empty — `aiohttp` is a HA core dep
+- Sensor descriptions are a module-level constant list, not generated per-entry
+- `available` property checks both `last_update_success` and `data is not None`
+- `native_value` and `extra_state_attributes` guard against `coordinator.data is None`
 
 ### Error Handling
 
-- `ConfigEntryAuthFailed` — triggers HA reauth flow (persistent credential failure)
-- `UpdateFailed` — logged by HA, coordinator retries on next interval
-- `InvalidAuth` / `CannotConnect` — used in config flow to show UI errors
-- `aiohttp.ClientError` — caught and wrapped in appropriate HA exceptions
+- `ConfigEntryAuthFailed` — triggers HA reauth flow
+- `UpdateFailed` — coordinator retries on next interval
+- `InvalidAuth` / `CannotConnect` — config flow UI errors
+- JSON parse errors caught with `aiohttp.ContentTypeError` / `ValueError`
+- API response type-checked (`isinstance(data, dict)`)
+- Null-safe nested dict access: `(result.get("key") or {}).get("nested")`
 
 ## Development Workflow
 
-### Deployment to Home Assistant
-
-The Makefile provides deployment commands over SSH:
+### Deployment to HA
 
 ```bash
-# Deploy files to HA instance (uses rsync, falls back to tar+ssh)
-make deploy
-
-# Restart Home Assistant after deployment
-make restart
-
-# Tail filtered logs (blife, ERROR, WARNING)
-make logs
-
-# Auto-deploy on file changes (requires fswatch)
-make watch
+make deploy              # rsync files to HA instance over SSH
+make restart             # restart HA core
+make logs                # tail filtered logs
+make watch               # auto-deploy on file changes (requires fswatch)
 ```
 
-Configure via environment variables:
-```bash
-export HA_HOST=homeassistant.local   # default
-export HA_USER=root                  # default
-export HA_CONFIG_PATH=/config        # default
-```
+Configure via env vars: `HA_HOST`, `HA_USER`, `HA_CONFIG_PATH`.
 
-### Adding a New Sensor
+### CI/CD
 
+Two GitHub Actions workflows run on push/PR:
+- **hassfest** — validates `manifest.json` against HA requirements
+- **HACS Validation** — validates HACS repository structure
+
+### Common Changes
+
+**Adding a new sensor:**
 1. Add sensor key constant to `const.py`
-2. Add a new `BLifePackagesSensorEntityDescription` entry in `sensor.py:get_sensor_descriptions()`
-3. Define `value_fn` and optionally `extra_state_attributes_fn` lambdas/functions
-4. Add translation keys to `strings.json` and `translations/en.json`
+2. Add a `BLifePackagesSensorEntityDescription` to `SENSOR_DESCRIPTIONS` in `sensor.py`
+3. Define `value_fn` and optionally `extra_state_attributes_fn`
+4. Add translation key to both `strings.json` and `translations/en.json`
 
-### Adding New API Data Fields
-
+**Adding new API data fields:**
 1. Add fields to the `Package` dataclass in `coordinator.py`
-2. Update `Package.to_dict()` to include new fields
+2. Update `Package.to_dict()`
 3. Update `_parse_packages_response()` to extract from API JSON
 4. Expose via sensor attributes as needed
 
-### Modifying Config Flow
+**Modifying API headers/payload:**
+1. Edit the relevant builder function in `api.py` — changes propagate to both config flow and coordinator
 
-1. Update `STEP_USER_DATA_SCHEMA` in `config_flow.py` for new fields
+**Modifying config flow:**
+1. Update `STEP_USER_DATA_SCHEMA` in `config_flow.py`
 2. Update `validate_input()` if new fields affect validation
-3. Update `strings.json` and `translations/en.json` for UI labels
-4. Ensure `strings.json` and `translations/en.json` stay in sync
+3. Keep `strings.json` and `translations/en.json` in sync
 
-## Dependencies
+## Important Gotchas
 
-- **Runtime:** `aiohttp>=3.8.0` (declared in `manifest.json`)
-- **Implicit (from HA):** `voluptuous`, `homeassistant` core libraries
-- **No test dependencies** currently configured
-
-## Important Files Reference
-
-| File | Purpose |
-|------|---------|
-| `const.py` | All constants: domain, API URL, scan interval, sensor keys, attribute keys |
-| `coordinator.py` | All BLife API interaction, authentication, and data parsing |
-| `config_flow.py` | UI setup flow, credential validation, reauth handling |
-| `sensor.py` | Sensor entity definitions and state computation |
-| `manifest.json` | Integration metadata (version, requirements, iot_class) |
-| `strings.json` | Source localization strings (must sync with `translations/en.json`) |
-
-## Things to Watch Out For
-
-- **Token in response header:** The BLife API returns the auth token in the `U-Set-Token` HTTP header, not in the JSON body. This is unusual and easy to miss.
-- **Timestamps in milliseconds:** API date fields use epoch milliseconds, not seconds.
-- **Header mimicry:** API requests must include mobile-app-like headers (`User-Agent`, `App-Path`, `DeviceID`, etc.) or the API may reject them.
-- **`strings.json` and `translations/en.json` must stay in sync** — they have identical structure and content.
-- **No test suite exists** — changes should be manually tested against a running HA instance.
-- **Sensitive data** (credentials, tokens) is never stored in the repository — only in HA's config entry system. Files like `deploy.local.sh` and `.env` are gitignored.
+- **Token in response header:** Auth token comes back in the `U-Set-Token` HTTP header, not the JSON body
+- **Timestamps in milliseconds:** API date fields use epoch milliseconds, not seconds
+- **Header mimicry:** API requests need mobile-app-like headers or the API rejects them
+- **`strings.json` and `translations/en.json` must stay in sync** — identical structure
+- **No test suite** — changes should be manually tested against a running HA instance
+- **`requirements` must be empty** — `aiohttp` is provided by HA core; listing it causes pip conflicts
+- **Entity names:** Use `translation_key` only, never set `name` alongside `_attr_has_entity_name = True`
+- **Sensitive data:** Credentials are stored in HA's config entry system only. `deploy.local.sh` and `.env` are gitignored

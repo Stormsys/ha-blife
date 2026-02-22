@@ -12,8 +12,10 @@ from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import API_BASE_URL, CONF_DEVICE_ID, DOMAIN
+from .api import LOGIN_URL, build_login_headers, build_login_payload
+from .const import CONF_DEVICE_ID, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -34,11 +36,10 @@ class CannotConnect(HomeAssistantError):
     """Error to indicate we cannot connect."""
 
 
-async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
-    """Validate the user input allows us to connect.
-
-    Data has the keys from STEP_USER_DATA_SCHEMA with values provided by the user.
-    """
+async def validate_input(
+    hass: HomeAssistant, data: dict[str, Any]
+) -> dict[str, Any]:
+    """Validate the user input allows us to connect."""
     username = data[CONF_USERNAME]
     password = data[CONF_PASSWORD]
     device_id = data[CONF_DEVICE_ID]
@@ -47,75 +48,42 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
         "Validating credentials for user %s with device %s", username, device_id
     )
 
-    headers = {
-        "Host": "api-community.ballymorelife.com",
-        "App-Path": "typeID:sign-in, appID:sign-in",
-        "Accept": "application/json, text/plain, */*",
-        "Sec-Fetch-Site": "cross-site",
-        "Accept-Language": "en-GB,en;q=0.9",
-        "Sec-Fetch-Mode": "cors",
-        "Content-Type": "application/json;charset=utf-8",
-        "Origin": "app://localhost",
-        "DeviceID": device_id,
-        "Authorization-Type": "Bearer",
-        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148",
-        "Sec-Fetch-Dest": "empty",
-    }
-
-    login_data = {
-        "UserName": username,
-        "Password": password,
-        "RememberMe": True,
-        "device": {
-            "uuid": device_id,
-            "model": "HomeAssistant",
-            "version": "1.0",
-            "manufacturer": "HomeAssistant",
-            "serial": "unknown",
-            "platform": "homeassistant",
-            "appPackageId": "com.homeassistant.blife",
-            "appVersion": "1.0.0",
-            "platformTag": 1,
-            "screenLock": True,
-        },
-    }
+    headers = build_login_headers(device_id)
+    payload = build_login_payload(username, password, device_id)
+    session = async_get_clientsession(hass)
 
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                f"{API_BASE_URL}/account/login",
-                headers=headers,
-                json=login_data,
-            ) as response:
-                if response.status == 401:
-                    raise InvalidAuth
-                if response.status != 200:
-                    _LOGGER.error(
-                        "Login failed with status %d: %s",
-                        response.status,
-                        await response.text(),
-                    )
-                    raise CannotConnect
+        async with session.post(
+            LOGIN_URL, headers=headers, json=payload
+        ) as response:
+            if response.status == 401:
+                raise InvalidAuth
+            if response.status != 200:
+                _LOGGER.error(
+                    "Login failed with status %d", response.status
+                )
+                raise CannotConnect
 
+            try:
                 result = await response.json()
-                
-                # Extract token from U-Set-Token header
-                token = response.headers.get("U-Set-Token")
-                if not token:
-                    _LOGGER.warning("No U-Set-Token header in response")
-                
-                # Extract firstname from user details
-                user_details = result.get("user", {}).get("details", {})
-                firstname = user_details.get("firstName", "").strip()
-                if not firstname:
-                    # Fallback to extracting from email
-                    firstname = username.split("@")[0].split(".")[0].capitalize()
+            except (aiohttp.ContentTypeError, ValueError) as err:
+                _LOGGER.error("Invalid response from API: %s", err)
+                raise CannotConnect from err
 
-                return {
-                    "title": f"BLife - {firstname}",
-                    "firstname": firstname,
-                    "token": token,  # Store token for coordinator
-                }
+            token = response.headers.get("U-Set-Token")
+            if not token:
+                _LOGGER.warning("No U-Set-Token header in response")
+
+            user_details = (result.get("user") or {}).get("details") or {}
+            firstname = user_details.get("firstName", "").strip()
+            if not firstname:
+                firstname = username.split("@")[0].split(".")[0].capitalize()
+
+            return {
+                "title": f"BLife - {firstname}",
+                "firstname": firstname,
+                "token": token,
+            }
     except aiohttp.ClientError as err:
         _LOGGER.error("Connection error during login: %s", err)
         raise CannotConnect from err
@@ -133,7 +101,6 @@ class BLifePackagesConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            # Check if this device is already configured
             await self.async_set_unique_id(user_input[CONF_DEVICE_ID])
             self._abort_if_unique_id_configured()
 
@@ -147,11 +114,12 @@ class BLifePackagesConfigFlow(ConfigFlow, domain=DOMAIN):
                 _LOGGER.exception("Unexpected exception")
                 errors["base"] = "unknown"
             else:
-                # Store firstname and token in the data
                 user_input["firstname"] = info["firstname"]
-                if "token" in info:
+                if info.get("token"):
                     user_input["token"] = info["token"]
-                return self.async_create_entry(title=info["title"], data=user_input)
+                return self.async_create_entry(
+                    title=info["title"], data=user_input
+                )
 
         return self.async_show_form(
             step_id="user",
@@ -211,4 +179,3 @@ class BLifePackagesConfigFlow(ConfigFlow, domain=DOMAIN):
             ),
             errors=errors,
         )
-

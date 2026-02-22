@@ -1,14 +1,12 @@
 {
   "domain": "blife_packages",
   "name": "BLife Concierge Packages",
-  "codeowners": ["@diogo"],
+  "codeowners": ["@Stormsys"],
   "config_flow": true,
   "dependencies": [],
-  "documentation": "https://github.com/diogo/blife-packages",
+  "documentation": "https://github.com/Stormsys/ha-blife",
   "iot_class": "cloud_polling",
-  "issue_tracker": "https://github.com/diogo/blife-packages/issues",
-  "requirements": ["aiohttp>=3.8.0"],
-  "version": "1.0.0",
-  "icon": "icon.png"
+  "issue_tracker": "https://github.com/Stormsys/ha-blife/issues",
+  "requirements": [],
+  "version": "0.1.0"
 }
-
